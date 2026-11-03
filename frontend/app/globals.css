@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --soft: #eaf0f5;
+  --ink: #12263a;
+  --muted: #566879;
+  --line: #dce3ea;
+  --accent: #0f766e;
+  --accent-ink: #ffffff;
+  --hot: #b42318;
+  --hot-bg: #fdecea;
+  --warm: #935400;
+  --warm-bg: #fdf1dc;
+  --cold: #2b5c8f;
+  --cold-bg: #e6eff8;
+  --pos: #157347;
+  --neg: #b42318;
+}
+
+.dark {
+  --bg: #0d1721;
+  --surface: #142231;
+  --soft: #1b2d3f;
+  --ink: #e6edf3;
+  --muted: #8ea3b6;
+  --line: #243a4f;
+  --accent: #3dbfae;
+  --accent-ink: #062521;
+  --hot: #ff8a80;
+  --hot-bg: #3a1b1b;
+  --warm: #f2b45a;
+  --warm-bg: #3a2c14;
+  --cold: #86b6e8;
+  --cold-bg: #162b42;
+  --pos: #5fd08f;
+  --neg: #ff8a80;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-soft: var(--soft);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-hot: var(--hot);
+  --color-hot-bg: var(--hot-bg);
+  --color-warm: var(--warm);
+  --color-warm-bg: var(--warm-bg);
+  --color-cold: var(--cold);
+  --color-cold-bg: var(--cold-bg);
+  --color-pos: var(--pos);
+  --color-neg: var(--neg);
+  --font-sans: "Figtree Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
