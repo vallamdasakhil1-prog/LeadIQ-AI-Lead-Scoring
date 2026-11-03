@@ -30,6 +30,8 @@ def quality_assessment(n: NormalizedLead, result: ScoreResult, conf: ConfidenceR
         text += f" Weaknesses: {'; '.join(result.negatives[:3]).rstrip('.')}."
     text += (f" Data confidence is {conf.level} — this reflects how complete and reliable the "
              "submitted information is, not the likelihood of conversion.")
+    if n.email or n.phone or n.website:
+        text += " Email, phone and website were format-checked only, not verified."
     return text
 
 
@@ -63,6 +65,10 @@ def next_action(n: NormalizedLead, result: ScoreResult, conf: ConfidenceResult) 
     if not contact_ok:
         return ("Request valid contact details (email or phone) before any outreach; the lead "
                 "cannot currently be reached.")
+    if result.negative_intent and result.classification != "COLD":
+        return (f"Do not push for a demo yet: {who}'s profile fits, but the stated requirement shows "
+                "no purchase intent. Confirm whether a genuine requirement exists before investing "
+                "sales effort.")
     if result.classification == "HOT":
         if not is_decision_maker:
             return (f"Contact the decision-maker at {n.company_name or 'the company'} via {who} "

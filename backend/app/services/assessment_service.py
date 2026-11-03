@@ -18,7 +18,9 @@ from ..models import Assessment, AssessmentHistory, Lead, ScoreBreakdown
 from . import narrative
 from .confidence import calculate_confidence
 from .gemini_service import GeminiError, GeminiService
-from .lead_validator import FIELD_ORDER, NormalizedLead, ValidationReport, validate_and_normalize
+from .lead_validator import (FIELD_ORDER, NormalizedLead, ValidationReport, clean_text,
+                             validate_and_normalize)
+from .prompt_safety import scrub
 from .scoring_engine import score_lead
 
 log = logging.getLogger("leadiq.assessment")
@@ -38,8 +40,6 @@ def create_lead(db: Session, payload: dict) -> tuple:
     normalized, report = validate_and_normalize(payload)
     if not report.usable:
         raise UnusableLeadError(report)
-    from .lead_validator import clean_text
-
     lead = Lead(**{f: clean_text(payload.get(f)) for f in FIELD_ORDER},
                 normalized_data=normalized.to_dict(), validation_report=report.to_dict())
     db.add(lead)
@@ -48,19 +48,33 @@ def create_lead(db: Session, payload: dict) -> tuple:
     return lead, report
 
 
-def _gemini_payload(n: NormalizedLead, result, conf) -> dict:
-    return {
-        "lead": {k: v for k, v in n.to_dict().items() if k != "company_size_value"},
-        "score": result.final_score,
-        "classification": result.classification,
-        "score_breakdown": [
-            {"parameter": p.label, "score": p.score, "max_score": p.max_score,
-             "explanation": p.explanation} for p in result.parameters],
-        "positive_factors": result.positives,
-        "negative_factors": result.negatives,
-        "confidence": {"level": conf.level, "score": conf.score, "notes": conf.notes,
-                       "meaning": "confidence in data quality, NOT probability of conversion"},
+def _gemini_payload(n: NormalizedLead, result, conf) -> tuple:
+    """Build the (sanitised) document sent to Gemini.  Returns (payload, redaction_flags).
+
+    Lead-supplied values live under ``untrusted_lead_data``.  Engine strings may quote lead text
+    (e.g. an industry name), so the whole payload is scrubbed, not just the lead block.
+    """
+    payload = {
+        "untrusted_lead_data": {k: v for k, v in n.to_dict().items() if k != "company_size_value"},
+        "engine_results": {
+            "score": result.final_score,
+            "classification": result.classification,
+            "score_breakdown": [
+                {"parameter": p.label, "score": p.score, "max_score": p.max_score,
+                 "explanation": p.explanation} for p in result.parameters],
+            "positive_factors": result.positives,
+            "negative_factors": result.negatives,
+            "confidence": {"level": conf.level, "score": conf.score, "notes": conf.notes,
+                           "meaning": "confidence in data quality, NOT probability of conversion"},
+        },
+        "contact_checks": {
+            "email": "format checked only; mailbox NOT verified",
+            "phone": "format checked only; number NOT verified",
+            "website": "format checked only; site NOT fetched or verified",
+            "reserved_example_domain_used": bool(n.email_is_reserved or n.website_is_reserved),
+        },
     }
+    return scrub(payload)
 
 
 def assess_lead(db: Session, lead: Lead, gemini: Optional[GeminiService] = None,
@@ -78,8 +92,8 @@ def assess_lead(db: Session, lead: Lead, gemini: Optional[GeminiService] = None,
 
     if gemini is not None:
         try:
-            analysis = gemini.analyze(_gemini_payload(normalized, result, conf),
-                                      result.final_score, result.classification)
+            payload, _ = _gemini_payload(normalized, result, conf)
+            analysis = gemini.analyze(payload, result.final_score, result.classification)
             quality, ai_text = analysis.quality_assessment, analysis.scoring_explanation
             insights, action = analysis.business_insights, analysis.recommended_next_action
             source, model_name = "gemini", gemini.model
@@ -98,7 +112,10 @@ def assess_lead(db: Session, lead: Lead, gemini: Optional[GeminiService] = None,
         confidence_score=conf.score,
         confidence_details={"components": conf.components, "notes": conf.notes,
                             "contradictions": conf.contradictions,
-                            "disclaimer": "Confidence reflects data quality, not conversion probability."},
+                            "prompt_injection_flags": conf.injection_flags,
+                            "disclaimer": ("Confidence reflects data quality, not conversion "
+                                           "probability. Email, phone and website were format-checked "
+                                           "only; none were verified.")},
         positive_factors=result.positives,
         negative_factors=result.negatives,
         scoring_explanation=narrative.scoring_explanation(result),

@@ -14,7 +14,7 @@ import { useApi } from "@/lib/use-api";
 import { formatDate, fmtScore } from "@/lib/utils";
 
 const COMPONENT_LABELS: Record<string, string> = {
-  data_completeness: "Data completeness", contact_validity: "Contact validity",
+  data_completeness: "Data completeness", contact_validity: "Contact format validity (not verified)",
   information_reliability: "Information reliability", consistency: "Consistency",
 };
 
@@ -59,6 +59,7 @@ export default function AssessmentPage() {
   const notAssessed = (assessment.error ?? "").includes("not been assessed");
   const title = l ? (l.name ?? l.company_name ?? `Lead ${id}`) : "Lead assessment";
   const issues = l?.validation_report?.fields.filter((f) => f.status !== "valid") ?? [];
+  const warnings = l?.validation_report?.warnings ?? [];
 
   const actions = (
     <Button variant="outline" onClick={run} disabled={busy || !l}>
@@ -194,6 +195,13 @@ export default function AssessmentPage() {
                   <div key={k} className="contents"><dt className="text-muted">{k}</dt><dd className={v ? "break-words" : "text-muted"}>{v ?? "Not provided"}</dd></div>
                 ))}
               </dl>
+              <p className="mt-3 text-xs text-muted">Email, phone and website are checked for format only; none are verified.</p>
+              {warnings.length > 0 && (
+                <div className="mt-3 rounded-md bg-soft p-3 text-[13px] text-muted">
+                  <p className="font-semibold text-ink">Notes</p>
+                  <ul className="mt-1 list-disc pl-4">{warnings.map((w) => <li key={w}>{w}</li>)}</ul>
+                </div>
+              )}
               {issues.length > 0 && (
                 <div className="mt-4 rounded-md bg-warm-bg p-3 text-[13px] text-warm">
                   <p className="font-semibold">Missing or invalid fields</p>

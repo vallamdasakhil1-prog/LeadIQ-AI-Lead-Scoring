@@ -19,14 +19,14 @@ type Key = keyof LeadInput;
 const FIELDS: { key: Key; label: string; placeholder: string; type?: string; full?: boolean; hint?: string }[] = [
   { key: "name", label: "Name", placeholder: "Rahul Sharma" },
   { key: "company_name", label: "Company name", placeholder: "ABC Technologies" },
-  { key: "website", label: "Website", placeholder: "www.abctechnologies.com" },
+  { key: "website", label: "Website", placeholder: "www.abctechnologies.com", hint: "Format is checked; the site is not visited or verified" },
   { key: "job_title", label: "Job title", placeholder: "Founder" },
   { key: "industry", label: "Industry", placeholder: "IT Services" },
   { key: "company_location", label: "Company location", placeholder: "Bangalore" },
   { key: "company_size", label: "Company size", placeholder: "50–100 employees", hint: "A number or range, e.g. 50-100 or 1000+" },
   { key: "lead_source", label: "Lead source", placeholder: "Website, Referral, LinkedIn…" },
-  { key: "email", label: "Email", placeholder: "rahul@example.com", type: "email" },
-  { key: "phone", label: "Phone", placeholder: "+91 9876543210", type: "tel", hint: "10-digit numbers are treated as Indian (+91)" },
+  { key: "email", label: "Email", placeholder: "rahul@example.com", type: "email", hint: "Format is checked; the mailbox is not verified" },
+  { key: "phone", label: "Phone", placeholder: "+91 9876543210", type: "tel", hint: "Format is checked, not verified. 10-digit numbers are treated as Indian (+91)" },
   { key: "requirement", label: "Requirement", placeholder: "What is the lead looking for?", full: true },
 ];
 

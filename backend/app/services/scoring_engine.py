@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ..config import PARAMETER_LABELS, PARAMETERS, ScoringConfig
+from .intent import analyse_intent
 from .lead_validator import NormalizedLead
 
 
@@ -27,6 +28,7 @@ class ParameterResult:
     explanation: str
     positives: list = field(default_factory=list)
     negatives: list = field(default_factory=list)
+    flags: list = field(default_factory=list)  # e.g. ["negative_intent"]
 
     @property
     def ratio(self) -> float:
@@ -42,6 +44,10 @@ class ScoreResult:
     negatives: list
     calculation: str  # human readable "Final Score = a + b + ... = X"
     thresholds: dict
+
+    @property
+    def negative_intent(self) -> bool:
+        return any("negative_intent" in p.flags for p in self.parameters)
 
 
 def _points(weight: float, ratio: float) -> float:
@@ -101,12 +107,15 @@ def _industry(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResul
 
 def _intent(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult:
     c = cfg.intent_components
-    criteria = ("Strength of the stated requirement: a named solution, an explicit buying "
+    criteria = ("Strength of the stated requirement: a named solution, an explicit (non-negated) buying "
                 "signal, a timeline/budget and enough detail to act on.")
     rule = (f"Solution mentioned = {_pct(c['solution'])} of weight; buying signal = "
             f"{_pct(c['buying_signal'])}; timeline/budget = {_pct(c['timeline_or_budget'])}; "
-            f"level of detail = up to {_pct(c['detail'])}. Negative-intent wording caps the "
-            f"parameter at {_pct(cfg.intent_negative_cap)}. Missing or invalid = 0.")
+            f"level of detail = up to {_pct(c['detail'])}. Negated phrases ('not looking for', "
+            f"\"don't need\", 'no purchase requirement', 'not interested in buying') earn no buying "
+            f"credit, and negative intent (a negated buying phrase with no affirmed one, or wording "
+            f"such as 'student' / 'college project') caps the parameter at "
+            f"{_pct(cfg.intent_negative_cap)}. Missing or invalid = 0.")
     pos, neg = [], []
     status = n.status.get("requirement")
     if status == "missing":
@@ -117,46 +126,54 @@ def _intent(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult:
         return _build("purchase_intent", w, 0.0, criteria, rule,
                       "The requirement text is invalid, so no points were awarded.",
                       pos, ["Requirement text is invalid"])
-    text = n.requirement.lower()
-    solution = _matches(text, cfg.intent_solution_keywords)
-    buying = _matches(text, cfg.intent_buying_keywords)
-    timeline = _matches(text, cfg.intent_timeline_keywords)
-    negative = _matches(text, cfg.intent_negative_keywords)
-    words = len(re.findall(r"[A-Za-z0-9]+", n.requirement))
+    a = analyse_intent(n.requirement, cfg)
+    words = a.words
     detail_share = c["detail"] if words >= 6 else (c["detail"] * 2 / 3 if words >= 3
                                                    else c["detail"] / 4)
-    parts = []
-    ratio = 0.0
-    if solution:
+    parts, ratio = [], 0.0
+    if a.solution:
         ratio += c["solution"]
-        parts.append(f"solution named ({', '.join(solution[:3])})")
-        pos.append(f"Specific solution requested ({', '.join(solution[:3])})")
+        parts.append(f"solution named ({', '.join(a.solution[:3])})")
+        pos.append(f"Specific solution requested ({', '.join(a.solution[:3])})")
     else:
         neg.append("No specific product or solution mentioned in the requirement")
-    if buying:
+    if a.buying:
         ratio += c["buying_signal"]
-        parts.append(f"buying signal ('{buying[0]}')")
+        parts.append(f"buying signal ('{a.buying[0]}')")
         pos.append("Clear buying signal in the requirement")
-    else:
+    elif not a.negated:
         neg.append("No explicit buying signal in the requirement")
-    if timeline:
+    if a.timeline:
         ratio += c["timeline_or_budget"]
-        parts.append(f"timeline/budget cue ('{timeline[0]}')")
+        parts.append(f"timeline/budget cue ('{a.timeline[0]}')")
         pos.append("Timeline or budget indicated")
     else:
         neg.append("Unclear purchase timeline or budget")
+        if a.timeline_negated:
+            parts.append(f"timeline/budget ruled out ('{a.timeline_negated[0]}')")
     ratio += detail_share
     parts.append(f"{words} word(s) of detail")
-    capped = False
-    if negative:
-        capped = True
+    if a.negated:
+        parts.append(f"negated phrase ('{a.negated[0]}') earns no credit")
+    capped = a.negative_intent
+    if capped:
         ratio = min(ratio, cfg.intent_negative_cap)
-        neg.append(f"Requirement suggests no real purchase intent ('{negative[0]}')")
         pos = []
+        if a.negated and not a.buying:
+            neg.append(f"Requirement rules out a purchase ('{a.negated[0]}')")
+        if a.negative:
+            neg.append(f"Requirement indicates no real purchase intent ('{a.negative[0]}')")
+    elif a.mixed_signals:
+        neg.append(f"Requirement also contains a negated buying phrase ('{a.negated[0]}'); "
+                   "only the affirmed buying phrases were scored")
     expl = "Detected: " + "; ".join(parts) + "."
     if capped:
-        expl += f" Capped at {_pct(cfg.intent_negative_cap)} because of negative-intent wording."
-    return _build("purchase_intent", w, ratio, criteria, rule, expl, pos, neg)
+        expl += (f" Capped at {_pct(cfg.intent_negative_cap)} of the weight because the requirement "
+                 "expresses no purchase intent.")
+    res = _build("purchase_intent", w, ratio, criteria, rule, expl, pos, neg)
+    if capped:
+        res.flags.append("negative_intent")
+    return res
 
 
 def _title(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult:
@@ -258,10 +275,12 @@ def _source(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult:
 
 def _contact(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult:
     c = cfg.contact_components
-    criteria = "Whether the lead can actually be reached: valid email, valid phone and a named contact."
-    rule = (f"Valid email = {_pct(c['email'])} of weight (disposable address = half); business "
-            f"email domain = +{_pct(c['business_domain'])}; valid phone = {_pct(c['phone'])}; "
-            f"valid name = {_pct(c['name'])}. Missing or invalid items earn 0.")
+    criteria = ("Whether the lead appears reachable: a well-formed email, a well-formed phone number and a "
+                "named contact. These are FORMAT checks only; no mailbox or number was verified.")
+    rule = (f"Well-formed email = {_pct(c['email'])} of weight (disposable address = half); business "
+            f"email domain = +{_pct(c['business_domain'])}; well-formed phone = {_pct(c['phone'])}; "
+            f"valid name = {_pct(c['name'])}. Missing or malformed items earn 0. Reserved example "
+            f"domains (example.com) are accepted as demonstration data and flagged, not penalised.")
     pos, neg, parts, ratio = [], [], [], 0.0
     if n.is_valid("email"):
         if n.email_is_disposable:
@@ -270,8 +289,10 @@ def _contact(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult
             neg.append("Email uses a disposable domain")
         else:
             ratio += c["email"]
-            parts.append("valid email")
-            pos.append("Valid email address provided")
+            parts.append("well-formed email (format check only)")
+            pos.append("Well-formed email address provided (mailbox not verified)")
+            if n.email_is_reserved:
+                parts.append("reserved example domain (demonstration data)")
             if n.email_is_free:
                 parts.append("free-mail domain (no business bonus)")
                 neg.append("Email uses a free-mail domain rather than a company domain")
@@ -279,17 +300,17 @@ def _contact(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult
                 ratio += c["business_domain"]
                 parts.append("business email domain")
     elif n.status.get("email") == "invalid":
-        parts.append("invalid email")
+        parts.append("malformed email")
         neg.append("Invalid email address")
     else:
         parts.append("no email")
         neg.append("Missing email address")
     if n.is_valid("phone"):
         ratio += c["phone"]
-        parts.append("valid phone")
-        pos.append("Valid phone number provided")
+        parts.append("well-formed phone (format check only)")
+        pos.append("Well-formed phone number provided (not verified)")
     elif n.status.get("phone") == "invalid":
-        parts.append("invalid phone")
+        parts.append("malformed phone")
         neg.append("Invalid phone number")
     else:
         parts.append("no phone")
@@ -306,10 +327,11 @@ def _contact(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult
 
 def _completeness(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult:
     c = cfg.completeness_components
-    criteria = "How much verifiable company information (name, website, location, size) is available."
+    criteria = ("How much company information (name, website, location, size) was supplied in a usable "
+                "form. The website is format-checked only; it is not fetched or verified.")
     rule = (f"Company name = {_pct(c['company_name'])} of weight; website = {_pct(c['website'])}; "
             f"location = {_pct(c['location'])}; company size = {_pct(c['size'])}. "
-            "Each earns credit only when present and valid.")
+            "Each earns credit only when present and well-formed.")
     checks = [("company_name", "company_name", "Company name"),
               ("website", "website", "Company website"),
               ("location", "company_location", "Company location"),

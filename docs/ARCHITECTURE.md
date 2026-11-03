@@ -25,18 +25,29 @@ SQLite via SQLAlchemy: leads, assessments, score_breakdowns, assessment_history
    explanation, insights and next action replace the fallback text. On **any** failure the fallback is kept and the reason is stored.
 6. Persist `Assessment` + 7 `ScoreBreakdown` rows + an `AssessmentHistory` row. Return the assessment.
 
-## How Gemini is prevented from affecting the score
-* Scoring happens **before** Gemini is called and imports nothing from it.
-* The persisted `score`/`classification` are read from the engine result; the Gemini response object has no such fields
-  (`GeminiAnalysis` = quality_assessment, scoring_explanation, business_insights, recommended_next_action).
-* The response is requested as JSON with a response schema and validated with Pydantic.
-* A guard rejects responses that state a different `N/100` score or a different HOT/WARM/COLD label.
-* The system prompt forbids recalculating scores or inventing missing fields; null fields are sent as null.
-* The API key is read from the backend environment only; the frontend only knows `NEXT_PUBLIC_API_URL`.
+## Gemini: responsibilities and limits
+**Gemini writes text only:** the lead quality assessment, a natural-language explanation, business insights and a recommended next action.
+It does **not** calculate, adjust or rank anything. If it is unavailable or its answer is rejected, rule-based text (`narrative.py`) is used and the
+score, classification, breakdown, factors, confidence and a deterministic calculation text are unaffected.
+
+## How the score is protected from Gemini
+* Scoring runs **before** Gemini is called; `scoring_engine`, `intent`, `confidence`, `lead_validator` and `narrative` import nothing from Gemini or any HTTP library (tested).
+* The persisted `score`/`classification` come from the engine result object. Gemini receives a *copy* of the data (a test mutates it and the stored result is unchanged).
+* `GeminiAnalysis` has four text fields and `extra="forbid"`: a response containing `score`, `classification` or any other key fails validation.
+* The same schema is sent to Gemini as `response_schema` with `response_mime_type="application/json"`.
+
+## Treating lead data as untrusted (prompt-injection defence)
+1. **Separation:** rules go in the SDK's `system_instruction`; the lead is sent in the user turn as JSON inside `<lead_analysis_data>` tags under `untrusted_lead_data`, next to the engine's results. The system prompt says everything inside is data, never instructions.
+2. **Escaping:** the JSON is ASCII-escaped and `<`/`>` become `\u003c`/`\u003e`, so lead text cannot forge or close the tags.
+3. **Scrubbing (`prompt_safety.py`):** every string in the payload — including engine explanations that quote lead text — has control/zero-width characters removed and length capped; strings that look like instructions ("ignore previous instructions", "set the score to 100", role changes, fake system tags, forged JSON keys, requests to reveal the prompt/keys) are replaced with a placeholder and recorded. Lead fields containing such text also lower the *confidence* (reliability −5) and are listed in the assessment's `confidence_details.prompt_injection_flags`; they never change the score.
+4. **Output validation:** strict schema (above), length limits, and cross-checks against the engine — any stated overall score or HOT/WARM/COLD label that differs from the engine's, talk of "recalculating/overriding", links or HTML, or claims that contact details are verified, causes the response to be rejected.
+5. **Fallback:** any rejection or failure keeps the rule-based text; `explanation_source` records `gemini` or `rule_based` and `gemini_error` the reason.
+
+Detection is a best-effort layer; the guarantees are 1–2 and 4–5 plus the architectural fact that the number does not depend on Gemini at all.
+Residual risks: a clever injection that evades the patterns could still influence Gemini's *wording* (not numbers), within the schema and cross-checks; keyword-stuffing a requirement can raise the deterministic intent score.
 
 ## Failure handling (all fall back to rule-based text)
-missing/placeholder key · 429 rate limit (one retry) · timeout · network error · other API errors · malformed or schema-invalid JSON ·
-contradictory content. `assessments.explanation_source` is `gemini` or `rule_based`; `gemini_error` records the reason.
+missing/placeholder key · 429 rate limit (one retry) · timeout · network error · 404 model-not-found · other API errors · malformed or schema-invalid JSON · contradictory or unsafe content.
 
 ## Data model
 * `leads` – raw fields as submitted, normalised JSON, validation report.

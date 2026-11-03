@@ -1,5 +1,11 @@
 """Validation and normalisation of raw lead input.
 
+IMPORTANT: email, phone and website checks here are *format* checks only.  Nothing is sent to a
+mail server, no DNS lookup is made and no website is fetched, so a "valid" email means
+"well-formed", never "verified deliverable".  Reserved example domains (RFC 2606 / 6761, e.g.
+example.com) are accepted so demonstration data such as the assignment's sample lead works, but
+they are flagged with a warning because they can never be real mailboxes or company sites.
+
 Every field is classified as ``valid``, ``missing`` or ``invalid``.  Invalid
 values are never silently repaired: they are reported and treated as unusable
 by the scoring engine.  A lead is rejected outright only when it has neither a
@@ -37,6 +43,9 @@ PLACEHOLDER_VALUES = {
     "none", "null", "unknown", "dummy", "sample", "fake", "foo", "bar",
 }
 
+RESERVED_DOMAINS = {"example.com", "example.net", "example.org"}
+RESERVED_TLDS = {"example", "test", "invalid", "localhost"}
+
 _EMAIL_RE = re.compile(
     r"^[a-z0-9._%+\-]+@[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?)*\.[a-z]{2,}$"
 )
@@ -45,14 +54,25 @@ _DOMAIN_RE = re.compile(
 )
 
 
+def is_reserved_domain(domain: Optional[str]) -> bool:
+    """True for RFC 2606/6761 reserved names: example.com/net/org (and subdomains), *.test, *.example, ..."""
+    if not domain:
+        return False
+    d = domain.lower().rstrip(".")
+    return (d in RESERVED_DOMAINS or any(d.endswith("." + r) for r in RESERVED_DOMAINS)
+            or d.rsplit(".", 1)[-1] in RESERVED_TLDS)
+
+
 @dataclass
 class FieldReport:
     field: str
     label: str
-    status: str  # valid | missing | invalid
+    status: str  # valid | missing | invalid   ("valid" = well-formed, NOT verified)
     message: str
     raw: Optional[str] = None
     normalized: Optional[str] = None
+    check: Optional[str] = None    # "format_only" for email / phone / website, else None
+    warning: Optional[str] = None  # e.g. reserved example domain
 
 
 @dataclass
@@ -62,6 +82,7 @@ class ValidationReport:
     missing: list = field(default_factory=list)
     invalid: list = field(default_factory=list)
     messages: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -86,6 +107,14 @@ class NormalizedLead:
     @property
     def email_domain(self) -> Optional[str]:
         return self.email.split("@", 1)[1] if self.email else None
+
+    @property
+    def email_is_reserved(self) -> bool:
+        return is_reserved_domain(self.email_domain)
+
+    @property
+    def website_is_reserved(self) -> bool:
+        return is_reserved_domain(self.website)
 
     @property
     def email_is_free(self) -> bool:
@@ -202,10 +231,11 @@ def validate_and_normalize(raw: dict) -> tuple:
     n = NormalizedLead()
     reports: list = []
 
-    def add(name, status, message, raw_value, normalized=None):
+    def add(name, status, message, raw_value, normalized=None, check=None, warning=None):
         n.status[name] = status
         reports.append(FieldReport(
-            name, FIELD_LABELS[name], status, message, clean_text(raw_value), normalized
+            name, FIELD_LABELS[name], status, message, clean_text(raw_value), normalized,
+            check, warning
         ))
 
     # Name
@@ -237,9 +267,13 @@ def validate_and_normalize(raw: dict) -> tuple:
         host = normalize_website(text)
         if host:
             n.website = host
-            add("website", "valid", "OK", text, host)
+            warn = (f"{host} is a reserved example domain (RFC 2606); treated as demonstration data."
+                    if is_reserved_domain(host) else None)
+            add("website", "valid", "Domain format is valid. The website was not checked.",
+                text, host, "format_only", warn)
         else:
-            add("website", "invalid", "Website is not a valid domain (e.g. example.com).", text)
+            add("website", "invalid", "Website is not a well-formed domain (e.g. acme.com).",
+                text, None, "format_only")
 
     # Plain text fields
     for fname, lo, hi, label in (
@@ -279,9 +313,13 @@ def validate_and_normalize(raw: dict) -> tuple:
         email = normalize_email(text)
         if email:
             n.email = email
-            add("email", "valid", "OK", text, email)
+            warn = (f"{email.split('@', 1)[1]} is a reserved example domain (RFC 2606); this address "
+                    "is treated as demonstration data, not a real mailbox."
+                    if is_reserved_domain(email.split("@", 1)[1]) else None)
+            add("email", "valid", "Format is valid. The mailbox was not verified.",
+                text, email, "format_only", warn)
         else:
-            add("email", "invalid", "Email address is not valid.", text)
+            add("email", "invalid", "Email address is not well-formed.", text, None, "format_only")
 
     # Phone
     text = clean_text(raw.get("phone"))
@@ -291,10 +329,12 @@ def validate_and_normalize(raw: dict) -> tuple:
         phone = normalize_phone(text)
         if phone:
             n.phone = phone
-            add("phone", "valid", "OK", text, phone)
+            add("phone", "valid", "Number format is valid. The number was not verified.",
+                text, phone, "format_only")
         else:
             add("phone", "invalid",
-                "Phone number is not valid (use e.g. +91 9876543210).", text)
+                "Phone number is not well-formed (use e.g. +91 9876543210).", text, None,
+                "format_only")
 
     reports.sort(key=lambda r: FIELD_ORDER.index(r.field))
     usable = n.status["name"] == "valid" or n.status["company_name"] == "valid"
@@ -304,6 +344,7 @@ def validate_and_normalize(raw: dict) -> tuple:
         missing=[r.field for r in reports if r.status == "missing"],
         invalid=[r.field for r in reports if r.status == "invalid"],
         messages=[f"{r.label}: {r.message}" for r in reports if r.status != "valid"],
+        warnings=[f"{r.label}: {r.warning}" for r in reports if r.warning],
     )
     if not usable:
         report.messages.insert(

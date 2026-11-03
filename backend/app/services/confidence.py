@@ -1,4 +1,4 @@
-"""Confidence in the *data* behind an assessment.
+"""Confidence in the *data* behind an assessment (format checks only: nothing is verified).
 
 Deliberately independent of the lead score: it looks only at how complete,
 valid, reliable and self-consistent the submitted information is.  It says
@@ -10,7 +10,9 @@ import re
 from dataclasses import dataclass, field
 
 from ..config import ScoringConfig
+from .intent import analyse_intent
 from .lead_validator import FIELD_ORDER, NormalizedLead, looks_like_placeholder
+from .prompt_safety import find_injection
 
 W_COMPLETENESS, W_CONTACT, W_RELIABILITY, W_CONSISTENCY = 40.0, 25.0, 20.0, 15.0
 
@@ -22,6 +24,7 @@ class ConfidenceResult:
     components: dict
     notes: list = field(default_factory=list)
     contradictions: list = field(default_factory=list)
+    injection_flags: list = field(default_factory=list)  # fields containing instruction-like text
 
 
 def calculate_confidence(n: NormalizedLead, cfg: ScoringConfig) -> ConfidenceResult:
@@ -57,6 +60,20 @@ def calculate_confidence(n: NormalizedLead, cfg: ScoringConfig) -> ConfidenceRes
     if any(looks_like_placeholder(v) for v in (n.name, n.company_name)):
         reliability -= 5
         notes.append("Name or company looks like placeholder text.")
+    if n.email_is_reserved or n.website_is_reserved:
+        reliability -= 3
+        notes.append("Email or website uses a reserved example domain (demonstration data, not a real "
+                     "mailbox or site).")
+    injection_flags = []
+    for fname in FIELD_ORDER:
+        hits = find_injection(getattr(n, fname) or "")
+        if hits:
+            injection_flags.append({"field": fname, "patterns": hits})
+    if injection_flags:
+        reliability -= 5
+        notes.append("Instruction-like text was found in: "
+                     + ", ".join(f["field"] for f in injection_flags)
+                     + ". It was withheld from the AI analysis and had no effect on the score.")
     reliability = max(0.0, reliability)
 
     # 4. Consistency (15): contradictions reduce confidence
@@ -67,12 +84,12 @@ def calculate_confidence(n: NormalizedLead, cfg: ScoringConfig) -> ConfidenceRes
     if re.search(cfg.title_student_regex, title) and re.search(r"\b(buy|purchase|implement|budget|enterprise)\b", req):
         contradictions.append("Student/intern contact claims an enterprise purchase requirement.")
         penalty += 7
-    from .scoring_engine import _matches  # local import avoids a cycle at import time
-    if _matches(req, cfg.intent_negative_keywords) and n.lead_source and re.search(
+    if n.requirement and analyse_intent(n.requirement, cfg).negative_intent and n.lead_source and re.search(
             r"referral|demo", n.lead_source.lower()):
         contradictions.append("High-intent lead source conflicts with a requirement that expresses no purchase intent.")
         penalty += 7
     if n.email_domain and n.website and not n.email_is_free and not n.email_is_disposable \
+            and not n.email_is_reserved and not n.website_is_reserved \
             and n.email_domain != n.website and not n.email_domain.endswith("." + n.website) \
             and not n.website.endswith("." + n.email_domain):
         contradictions.append(
@@ -91,5 +108,5 @@ def calculate_confidence(n: NormalizedLead, cfg: ScoringConfig) -> ConfidenceRes
             "information_reliability": {"score": reliability, "max": W_RELIABILITY},
             "consistency": {"score": consistency, "max": W_CONSISTENCY},
         },
-        notes=notes, contradictions=contradictions,
+        notes=notes, contradictions=contradictions, injection_flags=injection_flags,
     )

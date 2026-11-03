@@ -47,6 +47,8 @@ class FieldReportOut(BaseModel):
     message: str
     raw: Optional[str] = None
     normalized: Optional[str] = None
+    check: Optional[str] = None
+    warning: Optional[str] = None
 
 
 class ValidationReportOut(BaseModel):
@@ -55,6 +57,7 @@ class ValidationReportOut(BaseModel):
     missing: list[str]
     invalid: list[str]
     messages: list[str]
+    warnings: list[str] = []
 
 
 class ScoreBreakdownOut(BaseModel):

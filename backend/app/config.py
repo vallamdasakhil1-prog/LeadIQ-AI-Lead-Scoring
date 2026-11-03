@@ -94,8 +94,15 @@ class ScoringConfig:
         "looking for", "looking to", "need", "needs", "want to buy", "want to purchase",
         "require", "requires", "required", "interested in buying", "planning to",
         "wish to", "searching for", "evaluate", "evaluating", "implement", "purchase",
-        "buy", "upgrade", "replace", "migrate", "quote", "pricing", "demo", "proposal",
+        "buy", "buying", "purchasing", "upgrade", "replace", "migrate", "quote", "pricing",
+        "demo", "proposal",
     ])
+    # Words that, when negated ("no purchase requirement", "not interested"), signal no intent.
+    intent_negation_targets: list = field(default_factory=lambda: [
+        "requirement", "requirements", "purchase", "purchasing", "buying", "interested",
+        "interest", "planning", "plans", "intent", "intention", "looking",
+    ])
+    intent_negation_window: int = 4  # how many tokens before a phrase a negation cue may appear
     intent_timeline_keywords: list = field(default_factory=lambda: [
         "urgent", "urgently", "immediately", "asap", "this month", "this week",
         "next month", "next week", "this quarter", "within", "budget", "approved",
@@ -103,8 +110,8 @@ class ScoringConfig:
     ])
     intent_negative_keywords: list = field(default_factory=lambda: [
         "student", "learning", "assignment", "academic", "research paper", "college project",
-        "school project", "curious", "just browsing", "just looking", "no requirement",
-        "not interested", "no need", "exploring only", "thesis", "for fun", "no purchase",
+        "school project", "curious", "just browsing", "just looking", "exploring only",
+        "thesis", "for fun",
     ])
     intent_negative_cap: float = 0.12  # max share of the weight when negative intent is detected
 

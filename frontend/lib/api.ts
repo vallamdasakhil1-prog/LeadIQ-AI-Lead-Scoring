@@ -10,6 +10,8 @@ export interface FieldReport {
   message: string;
   raw: string | null;
   normalized: string | null;
+  check?: "format_only" | null; // email / phone / website are format-checked, never verified
+  warning?: string | null; // e.g. reserved example domain
 }
 export interface ValidationReport {
   usable: boolean;
@@ -17,6 +19,7 @@ export interface ValidationReport {
   missing: string[];
   invalid: string[];
   messages: string[];
+  warnings?: string[];
 }
 export interface AssessmentSummary {
   id: number;

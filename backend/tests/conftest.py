@@ -25,10 +25,15 @@ class FakeGemini:
     is_configured = True
 
     def __init__(self, mode="ok", text=None):
-        self.mode, self.text, self.calls = mode, text, 0
+        self.mode, self.text, self.calls, self.seen = mode, text, 0, None
 
     def analyze(self, payload, score, classification):
         self.calls += 1
+        self.seen = payload
+        if self.mode == "mutate":
+            payload["engine_results"]["score"] = 0
+            payload["engine_results"]["classification"] = "COLD"
+            payload["engine_results"]["score_breakdown"].clear()
         if self.mode == "error":
             raise GeminiError("network", "Could not reach the Gemini API.")
         if self.mode == "rate_limited":
