@@ -13,6 +13,7 @@ environment variables or a JSON file (`SCORING_CONFIG_PATH`) without touching th
 2. **Score** each of the 7 parameters: `score = round(weight × ratio, 2)`, `ratio ∈ [0, 1]` from the rule tables below.
 3. **Sum**: `Final = Σ parameter scores`, clamped to 0–100.
 4. **Classify** (configurable): HOT ≥ 75, WARM ≥ 50, COLD < 50.
+5. **Safeguard**: if the requirement expresses negative purchase intent, the classification is capped at `negative_intent_max_classification` (default WARM). The score from step 3 is never modified.
 
 ## Parameters and rules (default weights, total 100)
 
@@ -23,7 +24,7 @@ environment variables or a JSON file (`SCORING_CONFIG_PATH`) without touching th
 | Job title / authority | 15 | Founder/Owner/C-level/MD 100%; Director/VP/Head 87%; Manager 67%; Senior/Lead 47%; individual contributor 27%; other title 20%; assistant/junior capped at 27%; student/intern 7%; missing/invalid 0%. Highest matching tier wins, then the junior/student caps apply |
 | Company size | 10 | Midpoint of the stated range: ≤ 10 → 40%; 11–50 → 70%; 51–500 → 100%; 501–1000 → 80%; > 1000 → 70%; missing/invalid 0% |
 | Lead source | 10 | Referral/demo request 100%; website/inbound 90%; partner 80%; event/webinar/LinkedIn 70%; email campaign/ads 60%; social 50%; cold/outbound/purchased list 30%; other known source 40%; missing/invalid 0% |
-| Contact information | 10 | Well-formed email 40% (+10% for a non-free-mail domain; disposable domains earn half and no bonus) + well-formed phone 40% + valid name 10%. Missing/malformed items earn 0 |
+| Contact information | 10 | Well-formed email 40% (+10% only for a genuine business domain: free-mail, disposable and **reserved example domains earn no bonus**; disposable earns half the email credit) + well-formed phone 40% + valid name 10%. Missing/malformed items earn 0 |
 | Company completeness | 10 | Company name 30% + website 30% + location 20% + size 20%, each only if present **and** well-formed |
 
 Each `ParameterResult` stores its maximum weight, evaluation criteria, the rule text, the actual score and an explanation; these are
@@ -59,9 +60,15 @@ Plain keyword matching would read "**not** looking for a CRM" as a buying signal
 | Not looking for ERP, but need a CRM urgently | 25 |
 
 **Known limits:** rules are keyword based, English only, and do not resolve double negatives ("can't say we aren't interested") or sarcasm.
-Because intent is 25% of the total, a founder at a perfect-fit company who states *no* purchase intent still totals about 77 and stays HOT by the
-sum-of-parameters rule; the recommended next action changes to "Do not push for a demo yet… confirm whether a genuine requirement exists",
-and the breakdown, negative factors and confidence notes make the contradiction visible. (A cap on the classification could be added in `ScoringConfig` if desired.)
+### Negative-intent classification safeguard
+Because intent is 25% of the total, a founder at a perfect-fit company who states *no* purchase intent still sums to **76** (20 + 3 + 15 + 10 + 9 + 9 + 10), which is HOT by the thresholds. Telling a sales team that such a lead is HOT would be misleading, so:
+
+* `classification = min(threshold band, negative_intent_max_classification)` when negative intent is detected; otherwise the band is used unchanged. It only ever lowers a class.
+* The numeric score, every parameter score and the breakdown are untouched. Score and classification therefore stay separately explainable.
+* Wherever the cap fires, the reason is stated the same way: the calculation line (`76 / 100 → HOT by score alone … classification capped at WARM`), a negative factor, the quality assessment, the UI note under the score dial, `config_snapshot.classification_safeguard` in the API, and the Gemini prompt (`engine_results.classification_safeguard`).
+* Mixed signals ("Not looking for ERP, but need a CRM urgently") are not negative intent and are not capped. A lead already below the cap (e.g. COLD) is unchanged and no safeguard is reported.
+* Configuration: JSON key `negative_intent_max_classification` = `HOT` (disabled) | `WARM` (default) | `COLD`. WARM was chosen because explicit "not interested" means *qualify before pursuing*, not *ignore*; choose COLD for a stricter policy.
+* Tested at the boundary (`hot_threshold` exactly at, and just above, the score), for each cap setting, for every negative phrasing, end-to-end through the API, and against a Gemini response that tries to call the lead HOT.
 
 ## Contact validation: format checking is not verification
 `email`, `phone` and `website` are checked **for format only**. The system does not contact a mail server, do a DNS/MX lookup, fetch the
@@ -70,9 +77,7 @@ message "Format is valid. The mailbox was not verified." (and equivalents); the 
 scans all generated text for unqualified "verified" claims. Gemini responses that claim verification are rejected.
 
 **Reserved example domains.** `example.com`, `example.net`, `example.org` (and subdomains) and the TLDs `.test`, `.example`, `.invalid`,
-`.localhost` (RFC 2606 / 6761) can never be real mailboxes or sites. They are *accepted* — otherwise the assignment's sample lead
-(`rahul@example.com`) would lose points — but they are flagged: a validation warning, a confidence note, a 3-point reliability deduction, a
-"demonstration data" mention in the explanation and in the Gemini prompt. The score is unchanged and no domain-mismatch contradiction is raised for them.
+`.localhost` (RFC 2606 / 6761) can never be real mailboxes or sites. They are *accepted* — otherwise the assignment's sample lead (`rahul@example.com`) would be unusable — but they are flagged as demonstration data: a validation warning, a confidence note, a 3-point reliability deduction, a "demonstration data" mention in the explanation and in the Gemini prompt. **They never earn the business-domain bonus point**, because a reserved name cannot be a real company mailbox; the contact explanation says so and a negative factor records it. No domain-mismatch contradiction is raised for them.
 Look-alikes such as `examples.com` or `myexample.com` are **not** treated as reserved.
 
 ## Missing and invalid data
@@ -90,11 +95,11 @@ Input: Rahul Sharma · ABC Technologies · www.abctechnologies.com · Founder ·
 | Job title | 15 | "Founder" → Owner/C-level tier 100% × 15 | **15** |
 | Company size | 10 | "50–100" → "50-100", midpoint 75 → 51–500 band 100% × 10 | **10** |
 | Lead source | 10 | "Website" → inbound 90% × 10 | **9** |
-| Contact information | 10 | email well-formed 4 + non-free business domain 1 + phone well-formed 4 + name 1 | **10** |
+| Contact information | 10 | email well-formed 4 + business-domain bonus **0** (`example.com` is a reserved example domain) + phone well-formed 4 + name 1 | **9** |
 | Company completeness | 10 | name 3 + website 3 + location 2 + size 2 | **10** |
 
-**Final Score = 20 + 19 + 15 + 10 + 9 + 10 + 10 = 93 / 100 → HOT** (≥ 75). Positive factors: relevant industry, specific solution requested, clear
-buying signal, founder authority, ideal company size, high-quality source, well-formed contacts, complete company information. Negative factor: unclear purchase timeline or budget.
+**Final Score = 20 + 19 + 15 + 10 + 9 + 9 + 10 = 92 / 100 → HOT** (≥ 75). Positive factors: relevant industry, specific solution requested, clear
+buying signal, founder authority, ideal company size, high-quality source, well-formed contacts, complete company information. Negative factors: unclear purchase timeline or budget; reserved example email domain earned no business-domain credit. (Before this correction the sample was 93: the engine wrongly gave the bonus to `example.com`.)
 
 Confidence (independent of the score): completeness 11/11 × 40 = 40; contact format validity 12 + 10 + 3 = 25; reliability 20 − 3 (reserved example domain) = 17;
 consistency 15 (no contradictions) → **97 → HIGH**.

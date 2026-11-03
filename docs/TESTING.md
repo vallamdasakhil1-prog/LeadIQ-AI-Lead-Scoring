@@ -1,10 +1,10 @@
 # Testing
 
 ```bash
-cd backend && source .venv/bin/activate && pytest -v        # 260 tests, ~7 s
+cd backend && source .venv/bin/activate && pytest -v        # 334 tests, ~15 s
 ```
 Tests use an in-memory SQLite database and fake Gemini clients; **no network access or API key is required** (they also pass with a dummy `GEMINI_API_KEY` set).
-`pytest` counts each parametrised case, so 260 tests come from the files below.
+`pytest` counts each parametrised case, so 334 tests come from the files below.
 
 | File | Tests | Covers |
 |---|---:|---|
@@ -13,6 +13,8 @@ Tests use an in-memory SQLite database and fake Gemini clients; **no network acc
 | `test_prompt_injection.py` | 73 | Untrusted lead data, prompt construction, Gemini response validation |
 | `test_contact_validation.py` | 55 | Format-only checks, reserved domains, missing/invalid contacts |
 | `test_determinism_and_gemini_isolation.py` | 46 | Identical inputs ⇒ identical scores; Gemini cannot influence numbers |
+| `test_reserved_domain_and_safeguard.py` | 54 | No bonus for reserved domains; negative-intent classification cap (boundaries, config, API, Gemini); input validation; missing/invalid data |
+| `test_gemini_sdk_integration.py` | 20 | Real `google-genai` SDK against a local stand-in server: default model `gemini-3.8-flash`, JSON mime type/schema, no temperature, rejection of bad responses, HTTP error mapping, docs sync |
 
 ## The 15 assignment scenarios (`test_scoring_and_api.py`)
 | # | Scenario | Test(s) |
@@ -47,7 +49,7 @@ wraps the data in a single escaped block, and marks contacts "format checked onl
 
 ## Contact validation (`test_contact_validation.py`)
 Format-only labelling; no generated text claims anything was verified; reserved domains (`example.com/net/org`, subdomains, `.test`, `.example`, `.invalid`, `.localhost`) are accepted and flagged while look-alikes
-(`examples.com`, `myexample.com`) are not; the sample lead still scores exactly 20 + 19 + 15 + 10 + 9 + 10 + 10 = 93 with confidence HIGH; 10 malformed emails, 9 malformed phones, 6 malformed websites; missing/invalid contacts cost points and confidence.
+(`examples.com`, `myexample.com`) are not; the sample lead still scores exactly 20 + 19 + 15 + 10 + 9 + 10 + 10 = 92 with confidence HIGH; 10 malformed emails, 9 malformed phones, 6 malformed websites; missing/invalid contacts cost points and confidence.
 
 ## Determinism and Gemini isolation (`test_determinism_and_gemini_isolation.py`)
 50 repeated runs per lead are identical; field order/whitespace/case/formatting variants score identically; results are identical across **separate processes with different `PYTHONHASHSEED`**;

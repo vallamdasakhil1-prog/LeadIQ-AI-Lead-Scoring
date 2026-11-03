@@ -93,6 +93,11 @@ export default function AssessmentPage() {
               <ScoreDial score={a.score} classification={a.classification}
                 hot={a.config_snapshot.hot_threshold} warm={a.config_snapshot.warm_threshold} />
               <ClassificationBadge value={a.classification} className="text-sm px-3 py-1" />
+              {a.config_snapshot.classification_safeguard && (
+                <p role="note" className="rounded-md bg-warm-bg p-2.5 text-center text-xs font-medium text-warm">
+                  {a.config_snapshot.classification_safeguard.message}
+                </p>
+              )}
               <ConfidenceBadge value={a.confidence_level} />
               <p className="text-center text-xs text-muted">Assessed {formatDate(a.assessed_at)}</p>
             </Card>

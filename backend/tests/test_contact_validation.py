@@ -74,8 +74,8 @@ def test_reserved_email_is_accepted_but_flagged_and_does_not_break_the_sample():
     assert rep.usable and n.is_valid("email") and n.email_is_reserved
     assert field(rep, "email")["warning"]
     r = score_lead(n, CFG)
-    assert [p.score for p in r.parameters] == [20, 19, 15, 10, 9, 10, 10]
-    assert r.final_score == 93.0 and r.classification == "HOT"
+    assert [p.score for p in r.parameters] == [20, 19, 15, 10, 9, 9, 10]
+    assert r.final_score == 92.0 and r.classification == "HOT"
     conf = calculate_confidence(n, CFG)
     assert conf.level == "HIGH" and any("reserved example domain" in x for x in conf.notes)
     assert not conf.contradictions     # example.com vs the company site is expected demo data
@@ -118,7 +118,7 @@ def test_malformed_emails_are_invalid(email):
 def test_malformed_phones_are_invalid(phone):
     n, rep = validate_and_normalize({**SAMPLE, "phone": phone})
     assert field(rep, "phone")["status"] == "invalid" and n.phone is None
-    assert contact_score({**SAMPLE, "phone": phone}) == 6.0          # email 4 + business domain 1 + name 1
+    assert contact_score({**SAMPLE, "phone": phone}) == 5.0          # email 4 + NO bonus (reserved example domain) + name 1
 
 
 @pytest.mark.parametrize("raw,normalized", [("+91 9876543210", "+919876543210"), ("9876543210", "+919876543210"),
@@ -148,7 +148,7 @@ def test_all_contacts_bad_still_scores_and_confidence_drops():
     assert rep.usable and set(rep.invalid) == {"email", "phone", "website"}
     good_conf, bad_conf = (calculate_confidence(validate_and_normalize(l)[0], CFG) for l in (SAMPLE, bad))
     assert bad_conf.score < good_conf.score and bad_conf.level in ("MEDIUM", "LOW", "HIGH")
-    assert score_lead(n, CFG).final_score < 93
+    assert score_lead(n, CFG).final_score < 92
 
 
 def test_api_accepts_unverifiable_contacts_but_lists_them(client):

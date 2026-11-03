@@ -144,12 +144,12 @@ def test_payload_marks_contact_checks_as_format_only(client):
 
 
 # ---- validating every Gemini response -----------------------------------------------------
-def parse(text, score=93.0, cls="HOT"):
+def parse(text, score=92.0, cls="HOT"):
     return GeminiService._parse(text, score, cls)
 
 
 def test_good_response_passes_and_may_mention_parameter_scores():
-    ok = parse(good_json(scoring_explanation="Purchase intent scored 19/25 and the final score is 93/100."))
+    ok = parse(good_json(scoring_explanation="Purchase intent scored 19/25 and the final score is 92/100."))
     assert ok.recommended_next_action
 
 
@@ -198,7 +198,7 @@ def test_rejected_response_falls_back_and_keeps_the_engine_score(client):
     n, _ = validate_and_normalize(SAMPLE)
     _, a = submit_and_assess(client, SAMPLE)
     assert a["explanation_source"] == "rule_based" and "invalid_response" in a["gemini_error"]
-    assert a["score"] == score_lead(n, CFG).final_score == 93.0 and a["classification"] == "HOT"
+    assert a["score"] == score_lead(n, CFG).final_score == 92.0 and a["classification"] == "HOT"
     assert a["quality_assessment"] and a["recommended_next_action"]
 
 

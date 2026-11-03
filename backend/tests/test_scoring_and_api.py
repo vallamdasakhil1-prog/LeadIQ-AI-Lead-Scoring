@@ -65,7 +65,7 @@ def test_invalid_phone_handled():
     assert "phone" in rep.invalid and rep.usable
     r = score_lead(n, CFG)
     assert "Invalid phone number" in r.negatives
-    assert params(r)["contact_information"].score == 6.0  # email 4 + bonus 1 + name 1
+    assert params(r)["contact_information"].score == 5.0  # email 4 + no bonus (reserved example.com) + name 1
 
 
 # 6. Missing website

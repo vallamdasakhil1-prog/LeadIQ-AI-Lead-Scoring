@@ -78,7 +78,7 @@ def test_positive_requirements_keep_their_scores(text, expected):
 
 def test_sample_lead_intent_unchanged_by_negation_logic():
     _, r = run(SAMPLE["requirement"])
-    assert intent(r).score == 19.0 and r.final_score == 93.0
+    assert intent(r).score == 19.0 and r.final_score == 92.0
 
 
 @pytest.mark.parametrize("text", [

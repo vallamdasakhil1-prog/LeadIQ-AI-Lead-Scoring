@@ -77,7 +77,14 @@ export interface Assessment {
   explanation_source: "gemini" | "rule_based";
   gemini_model: string | null;
   gemini_error: string | null;
-  config_snapshot: { weights: Record<string, number>; hot_threshold: number; warm_threshold: number };
+  config_snapshot: {
+    weights: Record<string, number>;
+    hot_threshold: number;
+    warm_threshold: number;
+    negative_intent_max_classification?: Classification;
+    score_band?: Classification;
+    classification_safeguard?: { rule: string; score_band: Classification; applied_classification: Classification; message: string } | null;
+  };
   assessed_at: string;
   breakdown: ScoreBreakdown[];
 }

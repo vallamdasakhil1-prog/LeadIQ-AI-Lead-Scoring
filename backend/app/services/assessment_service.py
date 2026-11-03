@@ -59,6 +59,7 @@ def _gemini_payload(n: NormalizedLead, result, conf) -> tuple:
         "engine_results": {
             "score": result.final_score,
             "classification": result.classification,
+            "classification_safeguard": result.safeguard,
             "score_breakdown": [
                 {"parameter": p.label, "score": p.score, "max_score": p.max_score,
                  "explanation": p.explanation} for p in result.parameters],
@@ -127,7 +128,10 @@ def assess_lead(db: Session, lead: Lead, gemini: Optional[GeminiService] = None,
         gemini_model=model_name,
         gemini_error=error,
         config_snapshot={"weights": config.weights, "hot_threshold": config.hot_threshold,
-                         "warm_threshold": config.warm_threshold},
+                         "warm_threshold": config.warm_threshold,
+                         "negative_intent_max_classification": config.negative_intent_max_classification,
+                         "score_band": result.threshold_classification,
+                         "classification_safeguard": result.safeguard},
     )
     assessment.breakdown = [
         ScoreBreakdown(parameter=p.key, label=p.label, max_score=p.max_score, score=p.score,

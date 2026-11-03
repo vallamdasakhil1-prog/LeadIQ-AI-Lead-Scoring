@@ -114,6 +114,10 @@ class ScoringConfig:
         "thesis", "for fun",
     ])
     intent_negative_cap: float = 0.12  # max share of the weight when negative intent is detected
+    # Classification safeguard: a lead whose requirement explicitly rules out a purchase can never be
+    # classified above this level, whatever its numeric score.  The numeric score is NOT changed.
+    # Set to "HOT" to disable the safeguard.
+    negative_intent_max_classification: str = "WARM"
 
     # --- Job title / authority -------------------------------------------
     # [name, regex, multiplier]; the highest matching multiplier wins, then the
@@ -168,6 +172,8 @@ class ScoringConfig:
             raise ValueError("weights must sum to 100")
         if not (0 < self.warm_threshold < self.hot_threshold <= 100):
             raise ValueError("thresholds must satisfy 0 < warm < hot <= 100")
+        if self.negative_intent_max_classification not in ("HOT", "WARM", "COLD"):
+            raise ValueError("negative_intent_max_classification must be HOT, WARM or COLD")
         for name in ("intent_components", "contact_components", "completeness_components"):
             if abs(sum(getattr(self, name).values()) - 1.0) > 1e-9:
                 raise ValueError(f"{name} must sum to 1.0")

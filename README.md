@@ -11,9 +11,10 @@ states how much to trust the data, and recommends the next sales action.
 * 11-field lead form; missing/invalid fields are flagged and normalised, and never block an otherwise usable lead
 * Transparent 7-parameter scoring (weights sum to 100), configurable thresholds, full per-rule breakdown stored for every assessment
 * **Negation-aware purchase intent** — "not looking for a CRM" is not a buying signal
+* **Negative-intent classification safeguard** — a lead that explicitly rules out a purchase is never classified above WARM (configurable); the numeric score is never altered and the cap is shown everywhere
 * All required outputs per lead: score, classification, quality assessment, positive factors, negative factors, scoring explanation, confidence, next action
 * Confidence (HIGH/MEDIUM/LOW) calculated independently of the score — data quality, not conversion probability
-* **Honest contact checks** — email, phone and website are *format-checked only*, never described as verified; reserved example domains are flagged
+* **Honest contact checks** — email, phone and website are *format-checked only*, never described as verified; reserved example domains are flagged and earn no business-domain bonus
 * Gemini analysis with structured JSON, strict validation, prompt-injection defences and a complete rule-based fallback
 * Dashboard, lead management (search/filter), assessment page and analytics from real database records; light & dark themes; Swagger at `/docs`
 
@@ -47,20 +48,19 @@ HOT 75–100 · WARM 50–74 · COLD 0–49 (override with `HOT_THRESHOLD` / `WA
 | Job title (15) | "Founder" → 100% | 15 |
 | Company size (10) | "50–100" → midpoint 75 → 51–500 band, 100% | 10 |
 | Lead source (10) | "Website" → inbound, 90% | 9 |
-| Contact information (10) | email well-formed 4 + business domain 1 + phone well-formed 4 + name 1 | 10 |
+| Contact information (10) | email well-formed 4 + business-domain bonus **0** (`example.com` is a reserved example domain) + phone well-formed 4 + name 1 | 9 |
 | Company completeness (10) | name 3 + website 3 + location 2 + size 2 | 10 |
 
-**Final Score = 20 + 19 + 15 + 10 + 9 + 10 + 10 = 93 / 100 → HOT.** Confidence: 40 (completeness) + 25 (contact format) + 17 (reliability: −3 for the reserved example domain) + 15 (consistency) = 97 → **HIGH**.
+**Final Score = 20 + 19 + 15 + 10 + 9 + 9 + 10 = 92 / 100 → HOT.** (Recalculated with the real engine after reserved example domains stopped earning the business-domain point; it was 93 before.) Confidence: 40 (completeness) + 25 (contact format) + 17 (reliability: −3 for the reserved example domain) + 15 (consistency) = 97 → **HIGH**.
 
 ### Purchase intent and negation
 "Looking for CRM software" scores 19/25, but "Not looking for CRM software", "We don't need a CRM", "Not interested in buying software", "No purchase requirement" and
 "Not planning to purchase a CRM" are all capped at 3/25 (12%) and get a negative factor. Negation is scoped to its clause, so "Not looking for ERP, but need a CRM urgently" still scores 25.
-A strong profile with negative intent can still total ~77 (the assignment's sum-of-parameters rule), so its next action becomes *"Do not push for a demo yet … confirm whether a genuine requirement exists."*
+**Classification safeguard.** The weights are a plain sum, so a strong profile with *no* purchase intent still totals 76 — HOT by score alone. Labelling a lead that says "we are not interested in buying a CRM" as HOT would mislead a sales team, so the engine caps its **classification** (never the score) at `negative_intent_max_classification` (default `WARM`). Rahul's profile with that requirement therefore reads *"76 / 100 → HOT by score alone; classification capped at WARM (negative purchase intent safeguard)"*, and the same sentence appears in the score dial note, negative factors, quality assessment, Gemini prompt and API (`config_snapshot.classification_safeguard`). It never raises a class, does not fire for mixed signals ("Not looking for ERP, but need a CRM"), and can be set to `COLD` or disabled with `HOT`. The next action becomes *"Do not push for a demo yet … confirm whether a genuine requirement exists."*
 
 ### Contact validation: format checking is not verification
 Nothing is sent to a mail server, no DNS lookup is made, no website is fetched. A "valid" email/phone/website means **well-formed**, and every report, explanation and Gemini prompt says so
-(`"check": "format_only"`). `example.com/.net/.org` and `.test/.example/.invalid/.localhost` addresses are accepted — so the supplied sample lead works — but flagged as demonstration data
-(a warning, a confidence note and a 3-point reliability deduction; the score is unchanged).
+(`"check": "format_only"`). `example.com/.net/.org` and `.test/.example/.invalid/.localhost` addresses are accepted — so the supplied sample lead works — but flagged as demonstration data (a warning, a confidence note, a 3-point reliability deduction) **and they never earn the business-domain bonus point** (Rahul: contact 9/10, total 92).
 
 ## Gemini integration
 **Responsibilities.** For each assessment the backend sends Gemini the (sanitised) lead, the engine's score, classification, breakdown, factors and confidence. Gemini returns exactly four text fields:
@@ -88,8 +88,7 @@ Requirements: Python 3.12+, Node 20+.
 git clone <your-repo-url> leadiq && cd leadiq
 cp .env.example backend/.env          # then edit GEMINI_API_KEY and GEMINI_MODEL (never commit .env)
 ```
-`GEMINI_MODEL` defaults to `gemini-3.5-flash` if unset; `gemini-2.5-flash` was scheduled for retirement on 2026-10-16, so set a model your key can use
-(see Google's [deprecations page](https://ai.google.dev/gemini-api/docs/deprecations)). The key is read only by the backend.
+`GEMINI_MODEL` defaults to **`gemini-3.8-flash`** (Google lists it as generally available since 2026-09-02; see the [deprecations page](https://ai.google.dev/gemini-api/docs/deprecations)). Google deprecated the `temperature`, `top_p` and `top_k` sampling parameters on 2026-07-21, so the backend sends none of them. Set `GEMINI_MODEL` to use a different model. The key is read only by the backend.
 
 ### Run the backend
 ```bash
@@ -102,19 +101,19 @@ uvicorn app.main:app --reload --port 8000        # Swagger UI: http://localhost:
 ### Run the frontend
 ```bash
 cd frontend
-npm install
+npm ci
 cp .env.local.example .env.local      # NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev                           # http://localhost:3000
 ```
 ### Run the tests
 ```bash
-cd backend && source .venv/bin/activate && pytest -v      # 260 tests, no network or API key needed
-cd ../frontend && npm run lint && npm run build
+cd backend && source .venv/bin/activate && pytest -v      # 334 tests, no network or API key needed
+cd ../frontend && npm ci && npm run lint && npm run build
 ```
 See [docs/TESTING.md](docs/TESTING.md).
 
 ## API examples
-(Real responses from the running application with Gemini unconfigured; long arrays trimmed with `…`.)
+(Responses from the running application with Gemini unconfigured, re-captured after the corrections; long arrays trimmed with `…`.)
 
 **`POST /api/leads`** — create a lead (201)
 ```bash
@@ -142,7 +141,7 @@ curl -X POST http://localhost:8000/api/leads -H "Content-Type: application/json"
 **`POST /api/leads/{id}/assess`** — score the lead (201)
 ```json
 {
-  "id": 1, "lead_id": 1, "score": 93.0, "classification": "HOT",
+  "id": 1, "lead_id": 1, "score": 92.0, "classification": "HOT",
   "confidence_level": "HIGH", "confidence_score": 97.0,
   "confidence_details": {
     "components": { "data_completeness": {"score": 40.0, "max": 40.0}, "contact_validity": {"score": 25.0, "max": 25.0},
@@ -152,9 +151,9 @@ curl -X POST http://localhost:8000/api/leads -H "Content-Type: application/json"
     "disclaimer": "Confidence reflects data quality, not conversion probability. Email, phone and website were format-checked only; none were verified." },
   "positive_factors": ["Relevant industry (IT Services)", "Specific solution requested (crm, software)", "Clear buying signal in the requirement",
                        "Founder has decision-making authority", "…"],
-  "negative_factors": ["Unclear purchase timeline or budget"],
-  "scoring_explanation": "…\nFinal Score = 20 + 19 + 15 + 10 + 9 + 10 + 10 = 93 / 100 → HOT (HOT ≥ 75, WARM ≥ 50, COLD below)",
-  "quality_assessment": "Rahul Sharma (ABC Technologies) is a HOT lead with a score of 93/100, indicating high business potential. … Email, phone and website were format-checked only, not verified.",
+  "negative_factors": ["Unclear purchase timeline or budget", "Email uses a reserved example domain, so no business-domain credit was given"],
+  "scoring_explanation": "…\nFinal Score = 20 + 19 + 15 + 10 + 9 + 9 + 10 = 92 / 100 → HOT (HOT ≥ 75, WARM ≥ 50, COLD below)",
+  "quality_assessment": "Rahul Sharma (ABC Technologies) is a HOT lead with a score of 92/100, indicating high business potential. … Email, phone and website were format-checked only, not verified.",
   "recommended_next_action": "Schedule a product demonstration with Rahul Sharma within 48 hours and prepare a tailored proposal.",
   "explanation_source": "rule_based", "gemini_model": null, "gemini_error": "missing_api_key: GEMINI_API_KEY is not configured.",
   "breakdown": [ { "parameter": "industry_relevance", "label": "Industry Relevance", "max_score": 20.0, "score": 20.0, "explanation": "'IT Services' is a tier-1 target industry.", "…": "…" },
@@ -164,7 +163,7 @@ curl -X POST http://localhost:8000/api/leads -H "Content-Type: application/json"
 With a working key, `explanation_source` is `"gemini"` and `quality_assessment`, `ai_explanation`, `business_insights` and `recommended_next_action` are written by Gemini; every number is identical.
 
 **Negative buying intent** — same lead with `"requirement": "We are not interested in buying a CRM"`:
-`purchase_intent` = **3.0 / 25**, negative factor `Requirement rules out a purchase ('not interested in buying')`, total **77 (HOT)**, and
+`purchase_intent` = **3.0 / 25**, negative factor `Requirement rules out a purchase ('not interested in buying')`, total **76 / 100 — HOT by score alone, classification capped at WARM**, and
 `"recommended_next_action": "Do not push for a demo yet: Rahul Sharma's profile fits, but the stated requirement shows no purchase intent. Confirm whether a genuine requirement exists before investing sales effort."`
 
 **Unusable lead** — `POST /api/leads` with `{"email": "bad"}` → **422**
@@ -177,12 +176,21 @@ With a working key, `explanation_source` is `"gemini"` and `quality_assessment`,
 `GET /api/analytics/overview` (`total_leads`, `hot_leads`, `warm_leads`, `cold_leads`, `average_score`, distributions, category statistics) · `GET /api/health`.
 
 ## Screenshots
-Not included — capture the Dashboard, Add Lead, Assessment, Leads and Analytics pages from a local run and add them to `docs/screenshots/`.
+Captured from the real application (production build, seeded database, Gemini unconfigured so the text is rule-based).
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/01-dashboard.png) | ![Add lead](docs/screenshots/02-add-lead.png) |
+| Dashboard | Add lead form (sample lead filled) |
+| ![Assessment](docs/screenshots/03-assessment-rahul-sharma.png) | ![Safeguard](docs/screenshots/04-assessment-negative-intent-safeguard.png) |
+| Assessment: Rahul Sharma, 92 HOT | Same lead, negative intent: 76, capped at WARM |
+| ![Leads](docs/screenshots/05-leads.png) | ![Analytics](docs/screenshots/06-analytics.png) |
+| Leads | Analytics |
 
 ## Limitations and future improvements
-* Intent detection is keyword/negation based and English-only; it does not resolve double negatives or sarcasm. A strong profile with negative intent can still total ~77.
+* Intent detection is keyword/negation based and English-only; it does not resolve double negatives or sarcasm. Keyword-stuffing a requirement can raise the deterministic intent score.
 * Contact details are format-checked only. Real verification (MX/SMTP checks, website fetch) is deliberately not implemented; it would need network access and consent.
 * Rule tables are tuned for a CRM/software seller; 10-digit phone numbers are assumed Indian; no authentication or multi-tenancy; SQLite is for local use.
-* The Gemini path is covered by mocked and fake-client tests and by a real-SDK failure run (fake key); **a successful live Gemini call has not been tested**. Verify with your own key and a supported `GEMINI_MODEL` before demoing.
-* UI components follow shadcn/ui conventions but were written by hand (the shadcn CLI registry was unreachable when building). The UI was verified by lint, build and HTTP checks, not browser automation.
+* **Gemini integration status:** the code is exercised with the real `google-genai` SDK against a *local stand-in server* (request shape, model path, JSON mime type, schema, no temperature, response parsing, error mapping) and with fakes. **No live call to Google's API has been made** (no key available in the build environment), so acceptance of the response schema by the live `gemini-3.8-flash` endpoint is unverified. Run the app with your key and check that an assessment shows `Written by Gemini`; otherwise `gemini_error` says why it fell back.
+* UI components follow shadcn/ui conventions but were written by hand (the shadcn CLI registry was unreachable when building). The UI was verified by lint, build, and a headless-Chromium run of the real flow (no console errors); there are no automated UI tests.
 * Future: CSV import, CRM export, score-weight tuning from won/lost outcomes, Docker Compose.

@@ -28,6 +28,8 @@ def quality_assessment(n: NormalizedLead, result: ScoreResult, conf: ConfidenceR
         text += f" Strengths: {'; '.join(result.positives[:3]).rstrip('.')}."
     if result.negatives:
         text += f" Weaknesses: {'; '.join(result.negatives[:3]).rstrip('.')}."
+    if result.safeguard:
+        text += " " + result.safeguard["message"]
     text += (f" Data confidence is {conf.level} — this reflects how complete and reliable the "
              "submitted information is, not the likelihood of conversion.")
     if n.email or n.phone or n.website:
@@ -40,8 +42,9 @@ def natural_explanation(result: ScoreResult) -> str:
     best, worst = ranked[0], ranked[-1]
     return (f"The lead earned {result.final_score:g} out of 100 points. The strongest area was "
             f"{best.label} ({best.score:g}/{best.max_score:g}) and the weakest was "
-            f"{worst.label} ({worst.score:g}/{worst.max_score:g}). The classification "
-            f"{result.classification} follows directly from the configured thresholds.")
+            f"{worst.label} ({worst.score:g}/{worst.max_score:g}). "
+            + (result.safeguard["message"] if result.safeguard else
+               f"The classification {result.classification} follows directly from the configured thresholds."))
 
 
 def business_insights(n: NormalizedLead, result: ScoreResult, conf: ConfidenceResult) -> list:

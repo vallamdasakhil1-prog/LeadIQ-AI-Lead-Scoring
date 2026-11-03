@@ -44,6 +44,8 @@ class ScoreResult:
     negatives: list
     calculation: str  # human readable "Final Score = a + b + ... = X"
     thresholds: dict
+    threshold_classification: str = ""  # band the numeric score falls in, before any safeguard
+    safeguard: Optional[dict] = None  # set when the negative-intent cap lowered the classification
 
     @property
     def negative_intent(self) -> bool:
@@ -72,6 +74,18 @@ def classify(score: float, cfg: ScoringConfig) -> str:
     if score >= cfg.warm_threshold:
         return "WARM"
     return "COLD"
+
+
+_RANK = {"COLD": 0, "WARM": 1, "HOT": 2}
+
+
+def apply_negative_intent_cap(band: str, negative_intent: bool, cfg: ScoringConfig) -> str:
+    """Classification safeguard: explicit negative purchase intent cannot be classified above
+    ``cfg.negative_intent_max_classification``.  Only ever lowers the class; never touches the score."""
+    cap = cfg.negative_intent_max_classification
+    if negative_intent and _RANK[band] > _RANK[cap]:
+        return cap
+    return band
 
 
 # --------------------------------------------------------------------------- rules
@@ -280,7 +294,8 @@ def _contact(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult
     rule = (f"Well-formed email = {_pct(c['email'])} of weight (disposable address = half); business "
             f"email domain = +{_pct(c['business_domain'])}; well-formed phone = {_pct(c['phone'])}; "
             f"valid name = {_pct(c['name'])}. Missing or malformed items earn 0. Reserved example "
-            f"domains (example.com) are accepted as demonstration data and flagged, not penalised.")
+            f"domains (example.com/net/org, .test, .example, .invalid, .localhost) are accepted as "
+            f"demonstration data and flagged, but never earn the business-domain bonus.")
     pos, neg, parts, ratio = [], [], [], 0.0
     if n.is_valid("email"):
         if n.email_is_disposable:
@@ -292,8 +307,9 @@ def _contact(n: NormalizedLead, cfg: ScoringConfig, w: float) -> ParameterResult
             parts.append("well-formed email (format check only)")
             pos.append("Well-formed email address provided (mailbox not verified)")
             if n.email_is_reserved:
-                parts.append("reserved example domain (demonstration data)")
-            if n.email_is_free:
+                parts.append("reserved example domain (demonstration data, no business-domain bonus)")
+                neg.append("Email uses a reserved example domain, so no business-domain credit was given")
+            elif n.email_is_free:
                 parts.append("free-mail domain (no business bonus)")
                 neg.append("Email uses a free-mail domain rather than a company domain")
             else:
@@ -380,14 +396,33 @@ def score_lead(normalized: NormalizedLead, cfg: Optional[ScoringConfig] = None) 
     params = [_RULES[key](normalized, cfg, cfg.weights[key]) for key in PARAMETERS]
     total = round(sum(p.score for p in params), 2)
     final = max(0.0, min(100.0, total))
-    classification = classify(final, cfg)
+    negative_intent = any("negative_intent" in p.flags for p in params)
+    band = classify(final, cfg)
+    classification = apply_negative_intent_cap(band, negative_intent, cfg)
+    safeguard = None
     calc = ("Final Score = " + " + ".join(f"{p.score:g}" for p in params)
             + f" = {final:g} / 100 → {classification} "
             f"(HOT ≥ {cfg.hot_threshold:g}, WARM ≥ {cfg.warm_threshold:g}, COLD below)")
     positives = [x for p in params for x in p.positives]
     negatives = [x for p in params for x in p.negatives]
+    if classification != band:
+        safeguard = {
+            "rule": "negative_intent_cap",
+            "score_band": band,
+            "applied_classification": classification,
+            "message": (f"The score of {final:g} falls in the {band} band, but the requirement states no "
+                        f"purchase intent, so the classification is capped at {classification}. "
+                        "The numeric score is unchanged."),
+        }
+        calc = ("Final Score = " + " + ".join(f"{p.score:g}" for p in params)
+                + f" = {final:g} / 100 → {band} by score alone "
+                f"(HOT ≥ {cfg.hot_threshold:g}, WARM ≥ {cfg.warm_threshold:g}, COLD below); "
+                f"classification capped at {classification} (negative purchase intent safeguard)")
+        negatives.append(f"Classification capped at {classification} (score alone would be {band}) "
+                         "because the requirement expresses no purchase intent")
     return ScoreResult(
         final_score=final, classification=classification, parameters=params,
         positives=positives, negatives=negatives, calculation=calc,
         thresholds={"hot": cfg.hot_threshold, "warm": cfg.warm_threshold},
+        threshold_classification=band, safeguard=safeguard,
     )

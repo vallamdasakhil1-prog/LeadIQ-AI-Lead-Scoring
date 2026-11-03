@@ -46,7 +46,7 @@ def test_field_order_whitespace_case_and_formatting_do_not_matter():
     variant["email"], variant["phone"], variant["website"] = " RAHUL@Example.COM ", "98765 43210", "HTTP://WWW.ABCTECHNOLOGIES.COM/"
     variant["company_size"] = "50 to 100 employees"
     a, b = score_lead(validate_and_normalize(SAMPLE)[0], CFG), score_lead(validate_and_normalize(variant)[0], CFG)
-    assert a.final_score == b.final_score == 93.0
+    assert a.final_score == b.final_score == 92.0
     assert [p.score for p in a.parameters] == [p.score for p in b.parameters]
 
 
@@ -67,7 +67,7 @@ def test_identical_submissions_get_identical_assessments(client):
     keys = ("score", "classification", "confidence_level", "confidence_score", "positive_factors",
             "negative_factors", "scoring_explanation")
     assert all({k: r[k] for k in keys} == {k: results[0][k] for k in keys} for r in results)
-    assert all([b["score"] for b in r["breakdown"]] == [20, 19, 15, 10, 9, 10, 10] for r in results)
+    assert all([b["score"] for b in r["breakdown"]] == [20, 19, 15, 10, 9, 9, 10] for r in results)
 
 
 # --- Gemini cannot influence the score ------------------------------------------------------
@@ -118,9 +118,9 @@ def test_gemini_receives_a_copy_and_cannot_edit_the_persisted_result(client, gem
     gemini.mode = "mutate"            # FakeGemini scribbles over the payload it receives
     _, a = submit_and_assess(client, SAMPLE)
     assert gemini.seen["engine_results"]["score"] == 0            # the fake really did tamper with its copy
-    assert a["score"] == 93.0 and a["classification"] == "HOT"
+    assert a["score"] == 92.0 and a["classification"] == "HOT"
     stored = client.get(f"/api/leads/{a['lead_id']}/assessment").json()
-    assert stored["score"] == 93.0 and stored["breakdown"][1]["score"] == 19.0
+    assert stored["score"] == 92.0 and stored["breakdown"][1]["score"] == 19.0
     assert stored["config_snapshot"]["hot_threshold"] == 75
 
 
@@ -128,4 +128,4 @@ def test_gemini_text_is_stored_separately_from_numbers(client):
     _, a = submit_and_assess(client, SAMPLE)
     assert a["explanation_source"] == "gemini"
     assert a["scoring_explanation"].endswith("→ HOT (HOT ≥ 75, WARM ≥ 50, COLD below)")   # deterministic text
-    assert "Final Score = 20 + 19 + 15 + 10 + 9 + 10 + 10 = 93" in a["scoring_explanation"]
+    assert "Final Score = 20 + 19 + 15 + 10 + 9 + 9 + 10 = 92" in a["scoring_explanation"]
